@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ledger &mdash; Chess.com Game Analyzer</title>
+<meta name="description" content="Pull your latest Chess.com games and analyze them with a Stockfish engine running right in your browser.">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ===== Header ===== -->
+  <header class="topbar">
+    <div class="topbar__brand">
+      <span class="topbar__mark">&#9823;</span>
+      <div class="topbar__title">
+        <span class="topbar__name">Ledger</span>
+        <span class="topbar__tag">a quiet accounting of every move</span>
+      </div>
+    </div>
+
+    <form class="lookup" id="lookup-form" autocomplete="off">
+      <input
+        type="text"
+        id="username-input"
+        class="lookup__input"
+        placeholder="Chess.com username"
+        aria-label="Chess.com username"
+        spellcheck="false"
+      >
+      <button type="submit" class="lookup__submit" id="lookup-submit">
+        <span>Pull games</span>
+      </button>
+    </form>
+  </header>
+
+  <!-- ===== Status / errors ===== -->
+  <div class="status-bar" id="status-bar" hidden></div>
+
+  <!-- ===== Main layout ===== -->
+  <main class="layout">
+
+    <!-- Left: game list -->
+    <section class="panel panel--list" id="games-panel">
+      <div class="panel__head">
+        <h2>Recent games</h2>
+        <span class="panel__hint" id="games-count"></span>
+      </div>
+
+      <div class="game-list" id="game-list">
+        <div class="empty-state">
+          <p>Enter a Chess.com username above to load the last 10 games.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Right: board + analysis -->
+    <section class="panel panel--board" id="board-panel">
+
+      <div class="empty-state empty-state--board" id="board-empty">
+        <p>Pick a game on the left. Click it once to open the board, click again to run the engine.</p>
+      </div>
+
+      <div class="analysis" id="analysis" hidden>
+
+        <!-- game meta -->
+        <div class="game-meta" id="game-meta"></div>
+
+        <!-- accuracy summary -->
+        <div class="accuracy-summary" id="accuracy-summary" hidden></div>
+
+        <!-- ribbon: per-move win% sparkline, signature element -->
+        <div class="ribbon-wrap" id="ribbon-wrap" hidden>
+          <svg class="ribbon" id="ribbon" viewBox="0 0 1000 60" preserveAspectRatio="none"></svg>
+        </div>
+
+        <div class="board-row">
+          <!-- eval bar -->
+          <div class="eval-bar-wrap">
+            <div class="eval-bar" id="eval-bar">
+              <div class="eval-bar__fill" id="eval-bar-fill"></div>
+              <div class="eval-bar__zero"></div>
+            </div>
+            <div class="eval-bar__label" id="eval-bar-label">0.0</div>
+          </div>
+
+          <!-- board -->
+          <div class="board-wrap">
+            <div class="board" id="board"></div>
+            <div class="board__coords board__coords--files" id="coords-files"></div>
+          </div>
+
+          <!-- move list -->
+          <div class="movelist-wrap">
+            <div class="movelist-wrap__head">
+              <h3>Moves</h3>
+              <button class="ghost-btn" id="analyze-btn">Run engine analysis</button>
+            </div>
+            <div class="progress" id="progress" hidden>
+              <div class="progress__bar" id="progress-bar"></div>
+              <span class="progress__label" id="progress-label">Analyzing&hellip;</span>
+            </div>
+            <div class="movelist" id="movelist"></div>
+          </div>
+        </div>
+
+        <div class="board-controls">
+          <button class="ctrl-btn" id="btn-start" title="Start">&#8676;</button>
+          <button class="ctrl-btn" id="btn-prev" title="Previous move">&#8592;</button>
+          <button class="ctrl-btn" id="btn-next" title="Next move">&#8594;</button>
+          <button class="ctrl-btn" id="btn-end" title="End">&#8677;</button>
+          <label class="depth-select">
+            Depth
+            <select id="depth-select">
+              <option value="12">12 &mdash; fast</option>
+              <option value="14" selected>14 &mdash; balanced</option>
+              <option value="17">17 &mdash; strong</option>
+              <option value="20">20 &mdash; slow, precise</option>
+            </select>
+          </label>
+          <label class="toggle">
+            <input type="checkbox" id="toggle-arrow" checked>
+            <span>Best-move arrow</span>
+          </label>
+        </div>
+
+        <div class="move-detail" id="move-detail" hidden></div>
+
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>Analysis runs entirely in your browser via a local Stockfish engine. Nothing is uploaded anywhere.</span>
+  </footer>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chess.js@0.13.4/chess.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
