@@ -117,12 +117,12 @@
           <button class="ctrl-btn" id="btn-next" title="Next move">&#8594;</button>
           <button class="ctrl-btn" id="btn-end" title="End">&#8677;</button>
           <label class="depth-select">
-            Depth
+            Speed
             <select id="depth-select">
-              <option value="12">12 &mdash; fast</option>
-              <option value="14" selected>14 &mdash; balanced</option>
-              <option value="17">17 &mdash; strong</option>
-              <option value="20">20 &mdash; slow, precise</option>
+              <option value="150">Fast &mdash; ~150ms/move</option>
+              <option value="300" selected>Balanced &mdash; ~300ms/move</option>
+              <option value="600">Thorough &mdash; ~600ms/move</option>
+              <option value="1200">Deep &mdash; ~1.2s/move</option>
             </select>
           </label>
           <label class="toggle">
