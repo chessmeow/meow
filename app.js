@@ -13,8 +13,8 @@
   /* ---------------- Config ---------------- */
 
   const ENGINE_URLS = [
-    "https://cdn.jsdelivr.net/npm/stockfish.js@10.0.2/stockfish.js",
-    "https://unpkg.com/stockfish.js@10.0.2/stockfish.js"
+    "https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/10.0.2/stockfish.js",
+    "https://cdn.jsdelivr.net/npm/stockfish.js@10.0.2/stockfish.js"
   ];
 
   const PIECE_GLYPH = {
@@ -265,11 +265,14 @@
         throw new Error("This game has no moves to analyze.");
       }
 
+      const myUsername = (state.username || "").toLowerCase();
+      state.boardFlipped = game.black.username.toLowerCase() === myUsername;
+
       state.chess = chess;
       state.fens = fens;
       state.sanMoves = sanMoves;
       state.verboseMoves = verboseMoves;
-      state.currentPly = fens.length - 1;
+      state.currentPly = 0;
 
       dom.boardEmpty.hidden = true;
       dom.analysis.hidden = false;
@@ -347,14 +350,16 @@
         const isLight = (r + c) % 2 === 0;
         sq.className = "sq " + (isLight ? "sq--light" : "sq--dark");
 
-        const fileIdx = c;
-        const rankNum = 8 - r;
+        const gr = state.boardFlipped ? 7 - r : r;
+        const gc = state.boardFlipped ? 7 - c : c;
+        const fileIdx = gc;
+        const rankNum = 8 - gr;
         const squareName = FILES[fileIdx] + rankNum;
 
         if (move && (squareName === move.from)) sq.classList.add("sq--from");
         if (move && (squareName === move.to)) sq.classList.add("sq--to");
 
-        const piece = grid[r][c];
+        const piece = grid[gr][gc];
         if (piece) {
           const span = document.createElement("span");
           span.className = "piece--" + piece[0];
@@ -380,8 +385,10 @@
     const rank = parseInt(squareName[1], 10);
     const boardSize = dom.board.clientWidth || 420;
     const cell = boardSize / 8;
-    const x = file * cell + cell / 2;
-    const y = (8 - rank) * cell + cell / 2;
+    const col = state.boardFlipped ? 7 - file : file;
+    const row = state.boardFlipped ? rank - 1 : 8 - rank;
+    const x = col * cell + cell / 2;
+    const y = row * cell + cell / 2;
     return { x, y };
   }
 
@@ -516,7 +523,8 @@
       if (cpWhite > 0) label = "+" + label;
     }
     const winPct = winPercent(cpWhite);
-    dom.evalBarFill.style.height = winPct + "%";
+    const displayPct = state.boardFlipped ? (100 - winPct) : winPct;
+    dom.evalBarFill.style.height = displayPct + "%";
     dom.evalBarLabel.textContent = label;
   }
 
