@@ -376,6 +376,13 @@ a{ color: var(--gold); }
   color: var(--muted);
 }
 
+.eval-bar__anchor{
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--muted);
+  opacity: 0.6;
+}
+
 .board-wrap{ flex-shrink:0; }
 
 .board{
