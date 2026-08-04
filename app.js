@@ -18,8 +18,8 @@
   ];
 
   const PIECE_GLYPH = {
-    wp: "\u2659", wn: "\u2658", wb: "\u2657", wr: "\u2656", wq: "\u2655", wk: "\u2654",
-    bp: "\u265F", bn: "\u265E", bb: "\u265D", br: "\u265C", bq: "\u265B", bk: "\u265A"
+    wp: "\u2659\uFE0E", wn: "\u2658\uFE0E", wb: "\u2657\uFE0E", wr: "\u2656\uFE0E", wq: "\u2655\uFE0E", wk: "\u2654\uFE0E",
+    bp: "\u265F\uFE0E", bn: "\u265E\uFE0E", bb: "\u265D\uFE0E", br: "\u265C\uFE0E", bq: "\u265B\uFE0E", bk: "\u265A\uFE0E"
   };
 
   const FILES = ["a","b","c","d","e","f","g","h"];
@@ -604,7 +604,7 @@
     setStatus(null);
   }
 
-  function evaluateFen(fen, depth) {
+  function evaluateFen(fen, movetimeMs) {
     return new Promise((resolve) => {
       let lastCp = null;
       let lastMate = null;
@@ -631,7 +631,7 @@
 
       state.engine.addEventListener("message", handler);
       state.engine.postMessage("position fen " + fen);
-      state.engine.postMessage("go depth " + depth);
+      state.engine.postMessage("go movetime " + movetimeMs);
     });
   }
 
@@ -641,7 +641,7 @@
 
   async function runAnalysis() {
     if (state.engineBusy) return;
-    const depth = parseInt(dom.depthSelect.value, 10);
+    const movetimeMs = parseInt(dom.depthSelect.value, 10);
 
     try {
       dom.analyzeBtn.disabled = true;
@@ -658,7 +658,7 @@
         const pct = Math.round(((i + 1) / fens.length) * 100);
         dom.progressBar.style.width = pct + "%";
         dom.progressLabel.textContent = `Analyzing position ${i + 1} of ${fens.length}`;
-        const result = await evaluateFen(fens[i], depth);
+        const result = await evaluateFen(fens[i], movetimeMs);
         results.push(result);
         state.analysis[i] = result;
         // Keep the board eval bar live if the user is looking at this ply already.
