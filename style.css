@@ -611,3 +611,4 @@ a{ color: var(--gold); }
 .game-list::-webkit-scrollbar-thumb, .movelist::-webkit-scrollbar-thumb{
   background: var(--hairline); border-radius: 4px;
 }
+   
