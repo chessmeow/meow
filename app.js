@@ -569,22 +569,24 @@
       return;
     }
     const a = state.analysis[ply];
-    // Convert to White's perspective for the bar.
-    const sideToMove = (ply % 2 === 0) ? "w" : "b"; // fens[0] is white to move, alternates
+    // Always computed and displayed from White's perspective — light fill = White's
+    // share of the win probability, full stop, regardless of which way the board
+    // is oriented. Flipping this along with board orientation is what caused the
+    // "black is winning but the bar looks white" confusion.
+    const sideToMove = (ply % 2 === 0) ? "w" : "b";
     let cpWhite;
     let label;
     if (a.mate !== null && a.mate !== undefined) {
       const mateWhitePerspective = sideToMove === "w" ? a.mate : -a.mate;
       cpWhite = mateWhitePerspective > 0 ? 100000 : -100000;
-      label = "M" + Math.abs(a.mate);
+      label = (mateWhitePerspective > 0 ? "M" : "-M") + Math.abs(a.mate);
     } else {
       cpWhite = sideToMove === "w" ? a.cp : -a.cp;
       label = (cpWhite / 100).toFixed(1);
       if (cpWhite > 0) label = "+" + label;
     }
     const winPct = winPercent(cpWhite);
-    const displayPct = state.boardFlipped ? (100 - winPct) : winPct;
-    dom.evalBarFill.style.height = displayPct + "%";
+    dom.evalBarFill.style.height = winPct + "%";
     dom.evalBarLabel.textContent = label;
   }
 
