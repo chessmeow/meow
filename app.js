@@ -17,10 +17,20 @@
     "https://cdn.jsdelivr.net/npm/stockfish.js@10.0.2/stockfish.js"
   ];
 
-  const PIECE_GLYPH = {
-    wp: "\u2659\uFE0E", wn: "\u2658\uFE0E", wb: "\u2657\uFE0E", wr: "\u2656\uFE0E", wq: "\u2655\uFE0E", wk: "\u2654\uFE0E",
-    bp: "\u265F\uFE0E", bn: "\u265E\uFE0E", bb: "\u265D\uFE0E", br: "\u265C\uFE0E", bq: "\u265B\uFE0E", bk: "\u265A\uFE0E"
+  const PIECE_SHAPES = {
+    p: '<circle cx="22.5" cy="13" r="6"/><polygon points="17,19 28,19 30,26 15,26"/><polygon points="10,33 35,33 32,39 13,39"/><rect x="8" y="39" width="29" height="3"/>',
+    n: '<polygon points="13,36 32,36 30,24 33,18 27,10 20,12 18,16 12,20 14,26 11,30" stroke-linejoin="round"/><rect x="9" y="36" width="27" height="4"/>',
+    b: '<circle cx="22.5" cy="14" r="7"/><polygon points="16,20 29,20 31,33 14,33"/><circle cx="22.5" cy="5" r="2.3"/><rect x="9" y="33" width="27" height="5"/>',
+    r: '<rect x="12" y="10" width="5" height="7"/><rect x="20" y="10" width="5" height="7"/><rect x="28" y="10" width="5" height="7"/><rect x="12" y="15" width="21" height="4"/><polygon points="12,34 33,34 31,19 14,19"/><rect x="9" y="34" width="27" height="5"/>',
+    q: '<rect x="13" y="20" width="19" height="7"/><circle cx="14" cy="14" r="3"/><circle cx="19" cy="12" r="3"/><circle cx="22.5" cy="10" r="3"/><circle cx="26" cy="12" r="3"/><circle cx="31" cy="14" r="3"/><polygon points="13,27 32,27 30,34 15,34"/><rect x="9" y="34" width="27" height="5"/>',
+    k: '<rect x="21" y="4" width="3" height="10"/><rect x="18" y="7" width="9" height="3"/><path d="M13,20 Q22.5,15 32,20 L32,27 Q22.5,24 13,27 Z"/><polygon points="13,27 32,27 30,34 15,34"/><rect x="9" y="34" width="27" height="5"/>'
   };
+
+  function pieceSvgMarkup(pieceCode) {
+    const color = pieceCode[0]; // w | b
+    const type = pieceCode[1];  // p n b r q k
+    return `<svg class="piece-svg piece--${color}" viewBox="0 0 45 45" stroke-linejoin="round" stroke-width="1.3">${PIECE_SHAPES[type]}</svg>`;
+  }
 
   const FILES = ["a","b","c","d","e","f","g","h"];
 
@@ -41,6 +51,7 @@
     engineReady: false,
     engineBusy: false,
     boardFlipped: false,
+    squareEls: [],
     showArrow: true
   };
 
@@ -66,6 +77,9 @@
     evalBarFill: el("eval-bar-fill"),
     evalBarLabel: el("eval-bar-label"),
     board: el("board"),
+    filesRow: el("files-row"),
+    ranksCol: el("ranks-col"),
+    flipBtn: el("flip-btn"),
     movelist: el("movelist"),
     analyzeBtn: el("analyze-btn"),
     progress: el("progress"),
@@ -267,6 +281,7 @@
 
       const myUsername = (state.username || "").toLowerCase();
       state.boardFlipped = game.black.username.toLowerCase() === myUsername;
+      state.squareEls = [];
 
       state.chess = chess;
       state.fens = fens;
@@ -337,40 +352,85 @@
     return grid; // grid[0] = rank 8 ... grid[7] = rank 1
   }
 
+  function buildBoardGrid() {
+    dom.board.innerHTML = "";
+    state.squareEls = [];
+    for (let i = 0; i < 64; i++) {
+      const r = Math.floor(i / 8), c = i % 8;
+      const sq = document.createElement("div");
+      sq.className = "sq " + (((r + c) % 2 === 0) ? "sq--light" : "sq--dark");
+      const wrap = document.createElement("span");
+      wrap.className = "piece-wrap";
+      sq.appendChild(wrap);
+      dom.board.appendChild(sq);
+      state.squareEls.push({ el: sq, wrap, piece: null });
+    }
+  }
+
+  function renderCoordLabels() {
+    const files = state.boardFlipped ? [...FILES].reverse() : FILES;
+    const ranks = state.boardFlipped ? [1,2,3,4,5,6,7,8] : [8,7,6,5,4,3,2,1];
+    dom.filesRow.innerHTML = files.map(f => `<span>${f}</span>`).join("");
+    dom.ranksCol.innerHTML = ranks.map(r => `<span>${r}</span>`).join("");
+  }
+
   function renderBoard(ply) {
     const fen = state.fens[ply];
     const grid = fenToGrid(fen);
-    dom.board.innerHTML = "";
+    if (!state.squareEls || state.squareEls.length === 0) buildBoardGrid();
+    renderCoordLabels();
 
     const move = ply > 0 ? state.verboseMoves[ply - 1] : null;
 
-    for (let r = 0; r < 8; r++) {
-      for (let c = 0; c < 8; c++) {
-        const sq = document.createElement("div");
-        const isLight = (r + c) % 2 === 0;
-        sq.className = "sq " + (isLight ? "sq--light" : "sq--dark");
-
-        const gr = state.boardFlipped ? 7 - r : r;
-        const gc = state.boardFlipped ? 7 - c : c;
-        const fileIdx = gc;
-        const rankNum = 8 - gr;
-        const squareName = FILES[fileIdx] + rankNum;
-
-        if (move && (squareName === move.from)) sq.classList.add("sq--from");
-        if (move && (squareName === move.to)) sq.classList.add("sq--to");
-
-        const piece = grid[gr][gc];
-        if (piece) {
-          const span = document.createElement("span");
-          span.className = "piece--" + piece[0];
-          span.textContent = PIECE_GLYPH[piece];
-          sq.appendChild(span);
+    // Detect check: find the king of the side to move, if in check.
+    let checkSquare = null;
+    try {
+      const probe = new Chess(fen);
+      const sideToMove = (ply % 2 === 0) ? "w" : "b";
+      if (probe.in_check && probe.in_check()) {
+        outer:
+        for (let gr = 0; gr < 8; gr++) {
+          for (let gc = 0; gc < 8; gc++) {
+            if (grid[gr][gc] === sideToMove + "k") {
+              checkSquare = FILES[gc] + (8 - gr);
+              break outer;
+            }
+          }
         }
-        dom.board.appendChild(sq);
+      }
+    } catch (e) { /* non-fatal */ }
+
+    for (let i = 0; i < 64; i++) {
+      const r = Math.floor(i / 8), c = i % 8;
+      const gr = state.boardFlipped ? 7 - r : r;
+      const gc = state.boardFlipped ? 7 - c : c;
+      const fileIdx = gc;
+      const rankNum = 8 - gr;
+      const squareName = FILES[fileIdx] + rankNum;
+
+      const cell = state.squareEls[i];
+      cell.el.classList.toggle("sq--from", !!(move && squareName === move.from));
+      cell.el.classList.toggle("sq--to", !!(move && squareName === move.to));
+      cell.el.classList.toggle("sq--check", squareName === checkSquare);
+
+      const pieceCode = grid[gr][gc];
+      if (pieceCode !== cell.piece) {
+        cell.piece = pieceCode;
+        cell.wrap.classList.remove("is-visible");
+        if (pieceCode) {
+          cell.wrap.innerHTML = pieceSvgMarkup(pieceCode);
+          // eslint-disable-next-line no-unused-expressions
+          cell.wrap.offsetWidth; // force reflow so the transition below actually fires
+          requestAnimationFrame(() => cell.wrap.classList.add("is-visible"));
+        } else {
+          cell.wrap.innerHTML = "";
+        }
       }
     }
 
     // Best-move arrow overlay
+    const oldArrow = dom.board.querySelector(".board__arrow-layer");
+    if (oldArrow) oldArrow.remove();
     if (state.showArrow && state.analysis[ply] && state.analysis[ply].bestMoveUci) {
       drawArrow(state.analysis[ply].bestMoveUci);
     }
@@ -882,6 +942,11 @@
 
   dom.toggleArrow.addEventListener("change", () => {
     state.showArrow = dom.toggleArrow.checked;
+    renderBoard(state.currentPly);
+  });
+
+  dom.flipBtn.addEventListener("click", () => {
+    state.boardFlipped = !state.boardFlipped;
     renderBoard(state.currentPly);
   });
 
