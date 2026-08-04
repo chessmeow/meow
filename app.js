@@ -226,6 +226,16 @@
     loadGame(state.games[idx]);
   }
 
+  function extractSanMoves(pgnRaw) {
+    let text = pgnRaw;
+    text = text.replace(/\[[^\]]*\]/g, " ");      // drop [Header "..."] lines
+    text = text.replace(/\{[^}]*\}/g, " ");        // drop {comments}, incl. {%clk ...}
+    text = text.replace(/\$\d+/g, " ");             // drop NAGs like $1
+    text = text.replace(/\d+\.(\.\.)?/g, " ");        // drop move numbers "12." / "12..."
+    text = text.replace(/1-0|0-1|1\/2-1\/2|\*/g, " ");  // drop result token
+    return text.split(/\s+/).map(s => s.trim().replace(/[!?]+$/, "")).filter(Boolean);
+  }
+
   function loadGame(game) {
     if (typeof Chess === "undefined") {
       setStatus("The chess.js library didn't load (probably blocked by network/adblock/CDN issue) — the board can't work without it. Try disabling any ad/script blocker and reload.", "error");
@@ -235,25 +245,25 @@
     try {
       resetAnalysisState();
 
+      const sanList = extractSanMoves(game.pgn);
       const chess = new Chess();
-      const cleanedPgn = cleanPgn(game.pgn);
-      const ok = chess.load_pgn(cleanedPgn, { sloppy: true });
-      if (!ok) {
-        setStatus("Couldn't parse this game's PGN.", "error");
-        return;
+      const verboseMoves = [];
+      const fens = [chess.fen()];
+      const sanMoves = [null];
+
+      for (let i = 0; i < sanList.length; i++) {
+        const moveObj = chess.move(sanList[i], { sloppy: true });
+        if (!moveObj) {
+          throw new Error(`Couldn't parse move ${i + 1} ("${sanList[i]}") of this game.`);
+        }
+        verboseMoves.push(moveObj);
+        fens.push(chess.fen());
+        sanMoves.push(moveObj.san);
       }
 
-      const verboseMoves = chess.history({ verbose: true });
-
-      // Replay from scratch to build the fen list.
-      const replay = new Chess();
-      const fens = [replay.fen()];
-      const sanMoves = [null];
-      verboseMoves.forEach(m => {
-        replay.move(m.san);
-        fens.push(replay.fen());
-        sanMoves.push(m.san);
-      });
+      if (verboseMoves.length === 0) {
+        throw new Error("This game has no moves to analyze.");
+      }
 
       state.chess = chess;
       state.fens = fens;
@@ -277,14 +287,6 @@
     } catch (err) {
       setStatus("Couldn't open this game: " + (err.message || err), "error");
     }
-  }
-
-  function cleanPgn(pgn) {
-    return pgn
-      .replace(/\{[^}]*\}/g, "")   // strip {%clk ...}, {%eval ...} and other comments
-      .replace(/\$\d+/g, "")        // strip NAGs like $1 $2
-      .replace(/\s+/g, " ")
-      .trim();
   }
 
   function resetAnalysisState() {
