@@ -402,6 +402,8 @@ a{ color: var(--gold); }
   font-size: 34px;
   line-height:1;
   user-select:none;
+  font-family: "Segoe UI Symbol", "DejaVu Sans", "Noto Sans Symbols2", "Arial Unicode MS", sans-serif;
+  font-variant-emoji: text;
 }
 .sq--light{ background: var(--sq-light); }
 .sq--dark{ background: var(--sq-dark); }
