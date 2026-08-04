@@ -93,8 +93,11 @@
 
           <!-- board -->
           <div class="board-wrap">
-            <div class="board" id="board"></div>
-            <div class="board__coords board__coords--files" id="coords-files"></div>
+            <div class="board-with-ranks">
+              <div class="ranks-col" id="ranks-col"></div>
+              <div class="board" id="board"></div>
+            </div>
+            <div class="files-row" id="files-row"></div>
           </div>
 
           <!-- move list -->
@@ -116,6 +119,7 @@
           <button class="ctrl-btn" id="btn-prev" title="Previous move">&#8592;</button>
           <button class="ctrl-btn" id="btn-next" title="Next move">&#8594;</button>
           <button class="ctrl-btn" id="btn-end" title="End">&#8677;</button>
+          <button class="ctrl-btn" id="flip-btn" title="Flip board">&#8635;</button>
           <label class="depth-select">
             Speed
             <select id="depth-select">
