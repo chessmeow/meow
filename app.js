@@ -39,6 +39,10 @@
   const state = {
     username: null,
     games: [],           // list from chess.com API
+    archives: [],
+    archiveCursor: 0,
+    gameBuffer: [],
+    totalSeenAllTime: 0,
     activeGameIdx: null,
     chess: null,          // chess.js instance loaded with the active game
     fens: [],              // fens[0] = start position, fens[i] = after ply i
@@ -52,7 +56,11 @@
     engineBusy: false,
     boardFlipped: false,
     squareEls: [],
-    showArrow: true
+    showArrow: true,
+    clocks: [],           // per-ply seconds remaining, if the PGN included them
+    bookLength: 0,          // number of plies classified as opening theory
+    openingName: null,
+    engineTimeouts: []       // debug/telemetry: per-ply movetime actually used
   };
 
   /* ---------------- DOM refs ---------------- */
@@ -67,9 +75,13 @@
     gamesPanel: el("games-panel"),
     gamesCount: el("games-count"),
     gameList: el("game-list"),
+    loadMoreBtn: el("load-more-btn"),
     boardEmpty: el("board-empty"),
     analysis: el("analysis"),
     gameMeta: el("game-meta"),
+    materialRow: el("material-row"),
+    criticalMoment: el("critical-moment"),
+    verdict: el("verdict"),
     accuracySummary: el("accuracy-summary"),
     ribbonWrap: el("ribbon-wrap"),
     ribbon: el("ribbon"),
@@ -121,7 +133,7 @@
      Chess.com API
      ========================================================= */
 
-  async function fetchRecentGames(username) {
+  async function initArchives(username) {
     const uname = username.trim().toLowerCase();
     const archivesRes = await fetch(`https://api.chess.com/pub/player/${encodeURIComponent(uname)}/games/archives`);
     if (!archivesRes.ok) {
@@ -131,35 +143,33 @@
     const archivesData = await archivesRes.json();
     const archives = archivesData.archives || [];
     if (archives.length === 0) throw new Error(`"${username}" has never played a game on Chess.com (no archives exist).`);
+    state.archives = archives;
+    state.archiveCursor = archives.length;
+    state.gameBuffer = [];
+    state.totalSeenAllTime = 0;
+  }
 
-    // Walk backwards through months until we have at least 10 games
-    // (or we run out of months / a reasonable number of attempts).
-    let collected = [];
-    let totalSeenBeforeFilter = 0;
+  async function drainMoreGames(count) {
     let monthsChecked = 0;
-    for (let i = archives.length - 1; i >= 0 && monthsChecked < 6 && collected.length < 10; i--) {
+    while (state.gameBuffer.length < count && state.archiveCursor > 0 && monthsChecked < 12) {
+      state.archiveCursor--;
       monthsChecked++;
-      const res = await fetch(archives[i]);
+      const res = await fetch(state.archives[state.archiveCursor]);
       if (!res.ok) continue;
       const data = await res.json();
       const allGames = data.games || [];
-      totalSeenBeforeFilter += allGames.length;
+      state.totalSeenAllTime += allGames.length;
       const games = allGames.filter(g => g.rules === "chess"); // standard chess only
-      collected = collected.concat(games);
+      state.gameBuffer = state.gameBuffer.concat(games);
     }
+    state.gameBuffer.sort((a, b) => (b.end_time || 0) - (a.end_time || 0));
+    const batch = state.gameBuffer.slice(0, count);
+    state.gameBuffer = state.gameBuffer.slice(count);
+    return batch;
+  }
 
-    collected.sort((a, b) => (b.end_time || 0) - (a.end_time || 0));
-    const result = collected.slice(0, 10);
-
-    if (result.length === 0) {
-      if (totalSeenBeforeFilter === 0) {
-        throw new Error(`"${username}" has no games in the last ${monthsChecked} month(s). They may not have played recently.`);
-      } else {
-        throw new Error(`"${username}" has ${totalSeenBeforeFilter} recent game(s), but none are standard chess (they look like variants: Chess960, Crazyhouse, etc., which this tool doesn't support yet).`);
-      }
-    }
-
-    return result;
+  function hasMoreGames() {
+    return state.archiveCursor > 0 || state.gameBuffer.length > 0;
   }
 
   /* =========================================================
@@ -240,14 +250,75 @@
     loadGame(state.games[idx]);
   }
 
-  function extractSanMoves(pgnRaw) {
+  // A small curated table of common opening lines (well-established mainline
+  // theory only — not exhaustive, but covers what shows up in most club games).
+  // Used to (a) tag early moves "Book" instead of grading them against the
+  // engine, and (b) skip deep analysis on them entirely.
+  const OPENING_BOOK = [
+    { name: "Ruy Lopez", moves: ["e4","e5","Nf3","Nc6","Bb5","a6","Ba4","Nf6","O-O","Be7"] },
+    { name: "Italian Game", moves: ["e4","e5","Nf3","Nc6","Bc4","Bc5"] },
+    { name: "Petrov's Defense", moves: ["e4","e5","Nf3","Nf6"] },
+    { name: "Philidor Defense", moves: ["e4","e5","Nf3","d6"] },
+    { name: "Bishop's Opening", moves: ["e4","e5","Bc4"] },
+    { name: "King's Gambit", moves: ["e4","e5","f4"] },
+    { name: "Sicilian Defense: Najdorf", moves: ["e4","c5","Nf3","d6","d4","cxd4","Nxd4","Nf6","Nc3"] },
+    { name: "Sicilian Defense: Open", moves: ["e4","c5","Nf3","Nc6"] },
+    { name: "Sicilian Defense: Taimanov", moves: ["e4","c5","Nf3","e6"] },
+    { name: "Sicilian Defense: Closed", moves: ["e4","c5","Nc3"] },
+    { name: "Caro-Kann Defense", moves: ["e4","c6","d4","d5"] },
+    { name: "French Defense", moves: ["e4","e6","d4","d5"] },
+    { name: "Scandinavian Defense", moves: ["e4","d5"] },
+    { name: "Modern Defense", moves: ["e4","g6"] },
+    { name: "Queen's Gambit Declined", moves: ["d4","d5","c4","e6"] },
+    { name: "Slav Defense", moves: ["d4","d5","c4","c6"] },
+    { name: "Queen's Gambit Accepted", moves: ["d4","d5","c4","dxc4"] },
+    { name: "London System", moves: ["d4","d5","Bf4"] },
+    { name: "Veresov Attack", moves: ["d4","d5","Nc3"] },
+    { name: "King's Indian Defense", moves: ["d4","Nf6","c4","g6","Nc3","Bg7","e4","d6"] },
+    { name: "Nimzo-Indian Defense", moves: ["d4","Nf6","c4","e6","Nc3","Bb4"] },
+    { name: "Queen's Indian Defense", moves: ["d4","Nf6","c4","e6","Nf3","b6"] },
+    { name: "Dutch Defense", moves: ["d4","f5"] },
+    { name: "English Opening", moves: ["c4","e5"] },
+    { name: "Reti Opening", moves: ["Nf3","d5","g3"] }
+  ];
+
+  function stripCheckSymbol(san) { return (san || "").replace(/[+#]/g, ""); }
+
+  function matchOpeningBook(sanMoves) {
+    // sanMoves is 1-indexed with sanMoves[0] = null.
+    let best = { name: null, length: 0 };
+    for (const entry of OPENING_BOOK) {
+      let matched = 0;
+      for (let i = 0; i < entry.moves.length; i++) {
+        const actual = stripCheckSymbol(sanMoves[i + 1]);
+        if (actual !== entry.moves[i]) break;
+        matched++;
+      }
+      if (matched > best.length) best = { name: entry.name, length: matched };
+    }
+    return best; // { name, length } — length is how many plies are "book"
+  }
+
+  function extractMoves(pgnRaw) {
     let text = pgnRaw;
     text = text.replace(/\[[^\]]*\]/g, " ");      // drop [Header "..."] lines
-    text = text.replace(/\{[^}]*\}/g, " ");        // drop {comments}, incl. {%clk ...}
+    // Capture clock comments before stripping them.
+    const clocks = [];
+    text = text.replace(/\{[^}]*\}/g, (m) => {
+      const clkMatch = m.match(/%clk\s+(\d+):(\d+):(\d+(?:\.\d+)?)/);
+      if (clkMatch) {
+        const secs = parseInt(clkMatch[1], 10) * 3600 + parseInt(clkMatch[2], 10) * 60 + parseFloat(clkMatch[3]);
+        clocks.push(secs);
+      } else {
+        clocks.push(null);
+      }
+      return " ";
+    });
     text = text.replace(/\$\d+/g, " ");             // drop NAGs like $1
     text = text.replace(/\d+\.(\.\.)?/g, " ");        // drop move numbers "12." / "12..."
     text = text.replace(/1-0|0-1|1\/2-1\/2|\*/g, " ");  // drop result token
-    return text.split(/\s+/).map(s => s.trim().replace(/[!?]+$/, "")).filter(Boolean);
+    const sans = text.split(/\s+/).map(s => s.trim().replace(/[!?]+$/, "")).filter(Boolean);
+    return { sans, clocks: clocks.length === sans.length ? clocks : [] };
   }
 
   function loadGame(game) {
@@ -259,7 +330,7 @@
     try {
       resetAnalysisState();
 
-      const sanList = extractSanMoves(game.pgn);
+      const { sans: sanList, clocks: clockList } = extractMoves(game.pgn);
       const chess = new Chess();
       const verboseMoves = [];
       const fens = [chess.fen()];
@@ -282,6 +353,11 @@
       const myUsername = (state.username || "").toLowerCase();
       state.boardFlipped = game.black.username.toLowerCase() === myUsername;
       state.squareEls = [];
+      state.clocks = clockList;
+
+      const bookMatch = matchOpeningBook(sanMoves);
+      state.bookLength = bookMatch.length;
+      state.openingName = bookMatch.name || openingNameFromPgn(game.pgn);
 
       state.chess = chess;
       state.fens = fens;
@@ -294,17 +370,33 @@
       dom.accuracySummary.hidden = true;
       dom.ribbonWrap.hidden = true;
       dom.moveDetail.hidden = true;
+      dom.criticalMoment.hidden = true;
+      dom.verdict.hidden = true;
       dom.analyzeBtn.disabled = false;
-      dom.analyzeBtn.textContent = "Run engine analysis";
+      dom.analyzeBtn.textContent = "Re-run analysis";
 
       renderGameMeta(game);
       renderMoveList();
       renderBoard(state.currentPly);
       renderEvalBar(null);
       setStatus(null);
+
+      // Auto-run analysis as soon as the game opens.
+      runAnalysis();
     } catch (err) {
       setStatus("Couldn't open this game: " + (err.message || err), "error");
     }
+  }
+
+  function openingNameFromPgn(pgnRaw) {
+    const m = pgnRaw.match(/\[ECOUrl\s+"[^"]*\/openings\/([^"]+)"\]/i);
+    if (!m) return null;
+    // chess.com slugs look like "Italian-Game-Giuoco-Piano-3...Nf6" — keep the
+    // readable words, drop any trailing bare move-notation segment.
+    return m[1]
+      .split("-")
+      .filter(seg => !/^\d/.test(seg) && seg.length > 0)
+      .join(" ");
   }
 
   function resetAnalysisState() {
@@ -327,7 +419,8 @@
     dom.gameMeta.innerHTML = `<b>${escapeHtml(white)}</b> (${game.white.rating}) vs
       <b>${escapeHtml(black)}</b> (${game.black.rating}) &middot;
       ${escapeHtml(game.time_class || "")} &middot; ${date}
-      ${result ? "&middot; " + escapeHtml(result[1]) : ""}`;
+      ${result ? "&middot; " + escapeHtml(result[1]) : ""}
+      ${state.openingName ? "&middot; " + escapeHtml(state.openingName) : ""}`;
   }
 
   /* =========================================================
@@ -438,6 +531,7 @@
     updateMoveListHighlight(ply);
     renderEvalBar(ply);
     renderMoveDetail(ply);
+    renderMaterial(ply);
   }
 
   function squareCenter(squareName) {
@@ -500,9 +594,42 @@
     dom.board.appendChild(svg);
   }
 
-  /* =========================================================
-     Move list rendering
-     ========================================================= */
+  const PIECE_VALUE = { p: 1, n: 3, b: 3, r: 5, q: 9 };
+  const STARTING_COUNT = { p: 8, n: 2, b: 2, r: 2, q: 1 };
+
+  function renderMaterial(ply) {
+    const grid = fenToGrid(state.fens[ply]);
+    const counts = { w: { p:0,n:0,b:0,r:0,q:0 }, b: { p:0,n:0,b:0,r:0,q:0 } };
+    grid.forEach(row => row.forEach(cell => {
+      if (!cell) return;
+      const color = cell[0], type = cell[1];
+      if (counts[color][type] !== undefined) counts[color][type]++;
+    }));
+
+    const valueOf = (side) => Object.keys(PIECE_VALUE).reduce((s, t) => s + counts[side][t] * PIECE_VALUE[t], 0);
+    const diff = valueOf("w") - valueOf("b");
+
+    const capturedBy = (winnerColor) => {
+      // Pieces the opponent has lost = starting count minus what's left on their side.
+      const loserColor = winnerColor === "w" ? "b" : "w";
+      const pieces = [];
+      Object.keys(STARTING_COUNT).forEach(t => {
+        const lost = STARTING_COUNT[t] - counts[loserColor][t];
+        for (let i = 0; i < lost; i++) pieces.push(winnerColor + t);
+      });
+      return pieces;
+    };
+
+    const rowHtml = (color) => capturedBy(color).map(pc =>
+      `<span class="captured-piece">${pieceSvgMarkup(pc)}</span>`
+    ).join("");
+
+    dom.materialRow.innerHTML = `
+      <div class="material-side">${rowHtml("w")}</div>
+      <div class="material-diff">${diff === 0 ? "=" : (diff > 0 ? "White +" + diff : "Black +" + (-diff))}</div>
+      <div class="material-side">${rowHtml("b")}</div>
+    `;
+  }
 
   function renderMoveList() {
     dom.movelist.innerHTML = "";
@@ -670,12 +797,14 @@
     return new Promise((resolve) => {
       let lastCp = null;
       let lastMate = null;
+      let lastPv = null;
 
       const handler = (e) => {
         const line = typeof e.data === "string" ? e.data : "";
         if (line.startsWith("info")) {
           const cpMatch = line.match(/score cp (-?\d+)/);
           const mateMatch = line.match(/score mate (-?\d+)/);
+          const pvMatch = line.match(/\spv\s+(.+)$/);
           if (mateMatch) {
             lastMate = parseInt(mateMatch[1], 10);
             lastCp = null;
@@ -683,11 +812,12 @@
             lastCp = parseInt(cpMatch[1], 10);
             lastMate = null;
           }
+          if (pvMatch) lastPv = pvMatch[1].trim().split(/\s+/);
         } else if (line.startsWith("bestmove")) {
           const parts = line.split(" ");
           const bestMoveUci = parts[1] && parts[1] !== "(none)" ? parts[1] : null;
           state.engine.removeEventListener("message", handler);
-          resolve({ cp: lastCp, mate: lastMate, bestMoveUci });
+          resolve({ cp: lastCp, mate: lastMate, bestMoveUci, pv: lastPv || [] });
         }
       };
 
@@ -697,9 +827,34 @@
     });
   }
 
-  /* =========================================================
-     Run full-game analysis
-     ========================================================= */
+  function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+  // "Adapt to the position": spend the engine's time budget where it matters —
+  // more on positions with many reasonable options, less on forced sequences,
+  // simplified endgames, or moves still inside known opening theory.
+  function adaptiveMovetime(ply, baseMs) {
+    if (ply <= state.bookLength) return Math.min(60, baseMs);
+    let legalCount = 20;
+    try { legalCount = new Chess(state.fens[ply]).moves().length; } catch (e) { /* fall back to default */ }
+    if (legalCount <= 1) return Math.max(50, Math.round(baseMs * 0.3));
+
+    const grid = fenToGrid(state.fens[ply]);
+    let nonPawnPieces = 0;
+    grid.forEach(row => row.forEach(c => { if (c && c[1] !== "p" && c[1] !== "k") nonPawnPieces++; }));
+
+    let factor = clamp(legalCount / 28, 0.5, 1.6);
+    if (nonPawnPieces <= 6) factor *= 0.65; // simplified endgame — less to calculate
+    return Math.round(clamp(baseMs * factor, 60, baseMs * 2));
+  }
+
+  function materialValue(fen, color) {
+    const grid = fenToGrid(fen);
+    let total = 0;
+    grid.forEach(row => row.forEach(c => {
+      if (c && c[0] === color && PIECE_VALUE[c[1]]) total += PIECE_VALUE[c[1]];
+    }));
+    return total;
+  }
 
   async function runAnalysis() {
     if (state.engineBusy) return;
@@ -720,7 +875,8 @@
         const pct = Math.round(((i + 1) / fens.length) * 100);
         dom.progressBar.style.width = pct + "%";
         dom.progressLabel.textContent = `Analyzing position ${i + 1} of ${fens.length}`;
-        const result = await evaluateFen(fens[i], movetimeMs);
+        const thisMovetime = adaptiveMovetime(i, movetimeMs);
+        const result = await evaluateFen(fens[i], thisMovetime);
         results.push(result);
         state.analysis[i] = result;
         // Keep the board eval bar live if the user is looking at this ply already.
@@ -731,6 +887,8 @@
       applyClassificationTags();
       renderAccuracySummary();
       renderRibbon();
+      renderCriticalMoment();
+      renderVerdict();
       renderBoard(state.currentPly);
 
       dom.progress.hidden = true;
@@ -762,6 +920,14 @@
       const wpAfter = winPercent(cpAfterMover);
       const drop = Math.max(0, wpBefore - wpAfter);
 
+      if (i <= state.bookLength) {
+        perMove.push({
+          mover, classification: "Book", drop: 0, accuracy: 100,
+          cpBefore, cpAfterMover, bestMoveUci: before.bestMoveUci, isBook: true
+        });
+        continue;
+      }
+
       const playedUci = moveToUci(state.verboseMoves[i - 1]);
       const isBest = before.bestMoveUci && playedUci === before.bestMoveUci;
 
@@ -773,6 +939,22 @@
       else if (drop < 20) classification = "Mistake";
       else classification = "Blunder";
 
+      let onlyMove = false;
+      try { onlyMove = new Chess(state.fens[i - 1]).moves().length === 1; } catch (e) { /* ignore */ }
+
+      // Heuristic "Brilliant": a near-best move that gives up material for the
+      // mover but still leaves them clearly winning — the classic sacrifice
+      // pattern. Approximate, not a full look-ahead like chess.com's engine.
+      let isBrilliant = false;
+      if ((classification === "Best" || classification === "Excellent") && !onlyMove) {
+        const matBefore = materialValue(state.fens[i - 1], mover);
+        const matAfter = materialValue(state.fens[i], mover);
+        if (matAfter < matBefore && wpAfter >= 60) {
+          isBrilliant = true;
+          classification = "Brilliant";
+        }
+      }
+
       perMove.push({
         mover,
         classification,
@@ -780,7 +962,10 @@
         accuracy: accuracyFromDrop(drop),
         cpBefore,
         cpAfterMover,
-        bestMoveUci: before.bestMoveUci
+        bestMoveUci: before.bestMoveUci,
+        pv: before.pv || [],
+        isOnlyMove: onlyMove,
+        isBrilliant
       });
     }
     state.perMove = perMove;
@@ -797,9 +982,84 @@
      Accuracy summary + ribbon
      ========================================================= */
 
+  function renderCriticalMoment() {
+    let worst = null;
+    for (let ply = 1; ply < state.perMove.length; ply++) {
+      const info = state.perMove[ply];
+      if (!info || info.classification === "Book") continue;
+      if (!worst || info.drop > worst.info.drop) worst = { ply, info };
+    }
+    if (!worst || worst.info.drop < 15) { dom.criticalMoment.hidden = true; return; }
+
+    const moverName = worst.info.mover === "w"
+      ? state.games[state.activeGameIdx].white.username
+      : state.games[state.activeGameIdx].black.username;
+    const san = state.sanMoves[worst.ply];
+    const moveNum = Math.ceil(worst.ply / 2);
+
+    dom.criticalMoment.hidden = false;
+    dom.criticalMoment.innerHTML = `This is where the game turned: move <b>${moveNum}${worst.info.mover === "b" ? "..." : "."} ${escapeHtml(san)}</b> by ${escapeHtml(moverName)} swung the win probability by <b>${worst.info.drop.toFixed(0)} points</b>. Click to jump there.`;
+    dom.criticalMoment.onclick = () => { state.currentPly = worst.ply; renderBoard(worst.ply); };
+  }
+
+  function renderVerdict() {
+    const activeGame = state.games[state.activeGameIdx];
+    const myUsername = (state.username || "").toLowerCase();
+    const myColor = activeGame.black.username.toLowerCase() === myUsername ? "b" : "w";
+    const myMoves = state.perMove.filter(m => m && m.mover === myColor && m.classification !== "Book");
+    if (myMoves.length === 0) { dom.verdict.hidden = true; return; }
+
+    const avgAcc = myMoves.reduce((s, m) => s + m.accuracy, 0) / myMoves.length;
+    const blunders = myMoves.filter(m => m.classification === "Blunder").length;
+    const mistakes = myMoves.filter(m => m.classification === "Mistake").length;
+    const brilliants = myMoves.filter(m => m.isBrilliant).length;
+
+    let tier;
+    if (avgAcc >= 90) tier = "very clean";
+    else if (avgAcc >= 78) tier = "solid";
+    else if (avgAcc >= 62) tier = "shaky in places";
+    else tier = "rough";
+
+    let sentence = `A ${tier} game (${avgAcc.toFixed(1)}% accuracy)`;
+    if (state.openingName) sentence += ` out of the ${state.openingName}`;
+    sentence += ".";
+
+    if (brilliants > 0) {
+      sentence += ` Found ${brilliants} brilliant sacrifice-style move${brilliants > 1 ? "s" : ""}.`;
+    }
+    if (blunders > 0) {
+      sentence += ` ${blunders} blunder${blunders > 1 ? "s" : ""}${mistakes > 0 ? ` and ${mistakes} other mistake${mistakes > 1 ? "s" : ""}` : ""} stand out as the main thing to review.`;
+    } else if (mistakes > 0) {
+      sentence += ` ${mistakes} mistake${mistakes > 1 ? "s" : ""} crept in, but nothing game-losing.`;
+    } else {
+      sentence += " No real mistakes to speak of.";
+    }
+
+    // Time-trouble correlation, if the PGN included clock data.
+    if (state.clocks && state.clocks.length === state.sanMoves.length) {
+      const lowClockBlunders = [];
+      for (let ply = 1; ply < state.perMove.length; ply++) {
+        const info = state.perMove[ply];
+        if (info && info.mover === myColor && (info.classification === "Blunder" || info.classification === "Mistake")) {
+          const clk = state.clocks[ply];
+          if (typeof clk === "number") lowClockBlunders.push(clk);
+        }
+      }
+      if (lowClockBlunders.length >= 2) {
+        const avgClk = lowClockBlunders.reduce((a, b) => a + b, 0) / lowClockBlunders.length;
+        if (avgClk < 30) {
+          sentence += ` Most of those happened with under ${Math.round(avgClk)}s on the clock \u2014 time pressure looks like a factor.`;
+        }
+      }
+    }
+
+    dom.verdict.hidden = false;
+    dom.verdict.textContent = sentence;
+  }
+
   function renderAccuracySummary() {
-    const whiteMoves = state.perMove.filter((m, i) => m && m.mover === "w");
-    const blackMoves = state.perMove.filter((m, i) => m && m.mover === "b");
+    const whiteMoves = state.perMove.filter(m => m && m.mover === "w" && m.classification !== "Book");
+    const blackMoves = state.perMove.filter(m => m && m.mover === "b" && m.classification !== "Book");
 
     const avg = (arr) => arr.length ? arr.reduce((s, m) => s + m.accuracy, 0) / arr.length : 0;
     const countOf = (arr, cls) => arr.filter(m => m.classification === cls).length;
@@ -836,7 +1096,8 @@
   function classificationColor(cls) {
     return {
       Best: "#C9A15A", Excellent: "#7FA383", Good: "#7FA383",
-      Inaccuracy: "#D9C25A", Mistake: "#D68C3C", Blunder: "#B5473A"
+      Inaccuracy: "#D9C25A", Mistake: "#D68C3C", Blunder: "#B5473A",
+      Book: "#7E9284", Brilliant: "#5B9BAA"
     }[cls] || "#7E9284";
   }
 
@@ -871,7 +1132,7 @@
     // Dots colored by move classification, clickable.
     for (let ply = 1; ply < state.perMove.length; ply++) {
       const info = state.perMove[ply];
-      if (!info || info.classification === "Best" || info.classification === "Excellent" || info.classification === "Good") continue;
+      if (!info || info.classification === "Best" || info.classification === "Excellent" || info.classification === "Good" || info.classification === "Book") continue;
       const [x, y] = points[ply];
       const circle = document.createElementNS(svgNS, "circle");
       circle.setAttribute("cx", x.toFixed(1));
@@ -899,6 +1160,20 @@
      Move detail panel
      ========================================================= */
 
+  function uciPvToSan(fen, pvUci, maxPlies) {
+    try {
+      const temp = new Chess(fen);
+      const sans = [];
+      for (let i = 0; i < Math.min(pvUci.length, maxPlies); i++) {
+        const from = pvUci[i].slice(0, 2), to = pvUci[i].slice(2, 4), promotion = pvUci[i].slice(4, 5) || undefined;
+        const m = temp.move({ from, to, promotion });
+        if (!m) break;
+        sans.push(m.san);
+      }
+      return sans;
+    } catch (e) { return []; }
+  }
+
   function renderMoveDetail(ply) {
     const info = state.perMove[ply];
     if (!info) { dom.moveDetail.hidden = true; return; }
@@ -909,15 +1184,42 @@
       ? state.games[state.activeGameIdx].white.username
       : state.games[state.activeGameIdx].black.username;
 
+    if (info.classification === "Book") {
+      dom.moveDetail.innerHTML = `
+        <div class="move-detail__headline c-book">${escapeHtml(san)} \u2014 Book</div>
+        <div class="move-detail__row">${escapeHtml(moverName)} \u00b7 known opening theory${state.openingName ? " (" + escapeHtml(state.openingName) + ")" : ""}, not graded against the engine.</div>
+      `;
+      return;
+    }
+
+    let noteLine = "";
+    if (info.isOnlyMove) {
+      noteLine += `<div class="move-detail__row">This was the only legal move that avoided immediate disaster.</div>`;
+    }
+    if (info.isBrilliant) {
+      noteLine += `<div class="move-detail__row">Gives up material but stays clearly winning \u2014 a sacrifice pattern (heuristic detection, not a full look-ahead).</div>`;
+    }
+
     let bestLine = "";
-    if (info.classification !== "Best" && info.bestMoveUci) {
-      bestLine = `<div class="move-detail__row">Engine preferred: <span>${escapeHtml(info.bestMoveUci)}</span></div>`;
+    if (info.classification !== "Best" && info.classification !== "Brilliant" && info.bestMoveUci) {
+      const bestSan = uciPvToSan(state.fens[ply - 1], [info.bestMoveUci], 1)[0] || info.bestMoveUci;
+      bestLine = `<div class="move-detail__row">Engine preferred: <span>${escapeHtml(bestSan)}</span></div>`;
+    }
+
+    let pvLine = "";
+    if (info.pv && info.pv.length > 1) {
+      const pvSan = uciPvToSan(state.fens[ply - 1], info.pv, 6);
+      if (pvSan.length > 1) {
+        pvLine = `<div class="move-detail__row">Engine line: <span>${escapeHtml(pvSan.join(" "))}</span></div>`;
+      }
     }
 
     dom.moveDetail.innerHTML = `
       <div class="move-detail__headline c-${info.classification.toLowerCase()}">${escapeHtml(san)} \u2014 ${info.classification}</div>
       <div class="move-detail__row">${escapeHtml(moverName)} \u00b7 win% dropped by <span>${info.drop.toFixed(1)}</span> \u00b7 move accuracy <span>${info.accuracy.toFixed(1)}%</span></div>
+      ${noteLine}
       ${bestLine}
+      ${pvLine}
     `;
   }
 
@@ -935,6 +1237,27 @@
   dom.btnPrev.addEventListener("click", () => goToPly(state.currentPly - 1));
   dom.btnNext.addEventListener("click", () => goToPly(state.currentPly + 1));
   dom.btnEnd.addEventListener("click", () => goToPly(state.fens.length - 1));
+
+  // Mobile: swipe left/right across the board to step through moves.
+  (function setupSwipe() {
+    let startX = null, startY = null;
+    dom.board.addEventListener("touchstart", (e) => {
+      if (e.touches.length !== 1) return;
+      startX = e.touches[0].clientX;
+      startY = e.touches[0].clientY;
+    }, { passive: true });
+    dom.board.addEventListener("touchend", (e) => {
+      if (startX === null) return;
+      const endX = e.changedTouches[0].clientX;
+      const endY = e.changedTouches[0].clientY;
+      const dx = endX - startX, dy = endY - startY;
+      startX = null; startY = null;
+      if (Math.abs(dx) < 40 || Math.abs(dx) < Math.abs(dy) * 1.5) return; // not a clean horizontal swipe
+      if (!state.chess) return;
+      if (dx < 0) goToPly(state.currentPly + 1); // swipe left → next move
+      else goToPly(state.currentPly - 1);          // swipe right → previous move
+    }, { passive: true });
+  })();
 
   document.addEventListener("keydown", (e) => {
     if (!state.chess) return;
@@ -966,20 +1289,46 @@
     dom.submitBtn.disabled = true;
     setStatus(`Looking up ${username}\u2026`, "loading");
     dom.gameList.innerHTML = "";
+    dom.loadMoreBtn.hidden = true;
     dom.boardEmpty.hidden = false;
     dom.analysis.hidden = true;
 
     try {
-      const games = await fetchRecentGames(username);
+      await initArchives(username);
+      const games = await drainMoreGames(10);
+      if (games.length === 0) {
+        if (state.totalSeenAllTime === 0) {
+          throw new Error(`"${username}" has no games in recent months. They may not have played recently.`);
+        } else {
+          throw new Error(`"${username}" has ${state.totalSeenAllTime} recent game(s), but none are standard chess (they look like variants: Chess960, Crazyhouse, etc., which this tool doesn't support yet).`);
+        }
+      }
       state.username = username;
       state.games = games;
       renderGameList();
+      dom.loadMoreBtn.hidden = !hasMoreGames();
       setStatus(null);
     } catch (err) {
       setStatus(err.message || "Something went wrong.", "error");
       dom.gameList.innerHTML = `<div class="empty-state"><p>${escapeHtml(err.message || "Couldn't load games.")}</p></div>`;
     } finally {
       dom.submitBtn.disabled = false;
+    }
+  });
+
+  dom.loadMoreBtn.addEventListener("click", async () => {
+    dom.loadMoreBtn.disabled = true;
+    dom.loadMoreBtn.textContent = "Loading\u2026";
+    try {
+      const more = await drainMoreGames(10);
+      state.games = state.games.concat(more);
+      renderGameList();
+    } catch (err) {
+      setStatus(err.message || "Couldn't load more games.", "error");
+    } finally {
+      dom.loadMoreBtn.disabled = false;
+      dom.loadMoreBtn.textContent = "Load 10 more";
+      dom.loadMoreBtn.hidden = !hasMoreGames();
     }
   });
 
