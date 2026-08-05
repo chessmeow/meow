@@ -60,6 +60,7 @@
           <p>Enter a Chess.com username above to load the last 10 games.</p>
         </div>
       </div>
+      <button class="ghost-btn ghost-btn--block" id="load-more-btn" hidden>Load 10 more</button>
     </section>
 
     <!-- Right: board + analysis -->
@@ -73,6 +74,11 @@
 
         <!-- game meta -->
         <div class="game-meta" id="game-meta"></div>
+        <div class="material-row" id="material-row"></div>
+
+        <!-- verdict + critical moment -->
+        <div class="verdict" id="verdict" hidden></div>
+        <div class="critical-moment" id="critical-moment" hidden></div>
 
         <!-- accuracy summary -->
         <div class="accuracy-summary" id="accuracy-summary" hidden></div>
