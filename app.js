@@ -135,7 +135,7 @@
 
   async function initArchives(username) {
     const uname = username.trim().toLowerCase();
-    const archivesRes = await fetch(`https://api.chess.com/pub/player/${encodeURIComponent(uname)}/games/archives`);
+    const archivesRes = await fetchWithRetry(`https://api.chess.com/pub/player/${encodeURIComponent(uname)}/games/archives`);
     if (!archivesRes.ok) {
       if (archivesRes.status === 404) throw new Error(`No Chess.com account found for "${username}". Check the spelling — this is the login username, not a display name.`);
       throw new Error(`Chess.com API returned ${archivesRes.status} while fetching archives.`);
@@ -154,7 +154,7 @@
     while (state.gameBuffer.length < count && state.archiveCursor > 0 && monthsChecked < 12) {
       state.archiveCursor--;
       monthsChecked++;
-      const res = await fetch(state.archives[state.archiveCursor]);
+      const res = await fetchWithRetry(state.archives[state.archiveCursor]);
       if (!res.ok) continue;
       const data = await res.json();
       const allGames = data.games || [];
@@ -1281,6 +1281,27 @@
      Form submit
      ========================================================= */
 
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  // Chess.com's API occasionally has a transient hiccup (or a visitor's network
+  // drops a single request) — retry a couple of times before giving up, and
+  // turn the raw "Failed to fetch" browser message into something actionable.
+  async function fetchWithRetry(url, attempts = 3) {
+    let lastErr = null;
+    for (let i = 0; i < attempts; i++) {
+      try {
+        return await fetch(url);
+      } catch (err) {
+        lastErr = err;
+        if (i < attempts - 1) await sleep(500 * (i + 1));
+      }
+    }
+    throw new Error(
+      "Couldn't reach Chess.com's servers (network request failed after " + attempts + " attempts). " +
+      "This is usually a connection issue, a browser privacy extension blocking chess.com, or a brief outage on Chess.com's end — not a bug in this page. Check your connection and try again."
+    );
+  }
+
   dom.form.addEventListener("submit", async (e) => {
     e.preventDefault();
     const username = dom.usernameInput.value.trim();
@@ -1310,7 +1331,13 @@
       setStatus(null);
     } catch (err) {
       setStatus(err.message || "Something went wrong.", "error");
-      dom.gameList.innerHTML = `<div class="empty-state"><p>${escapeHtml(err.message || "Couldn't load games.")}</p></div>`;
+      dom.gameList.innerHTML = `
+        <div class="empty-state">
+          <p>${escapeHtml(err.message || "Couldn't load games.")}</p>
+          <button class="ghost-btn ghost-btn--block" id="retry-lookup-btn">Try again</button>
+        </div>`;
+      const retryBtn = document.getElementById("retry-lookup-btn");
+      if (retryBtn) retryBtn.addEventListener("click", () => dom.form.requestSubmit());
     } finally {
       dom.submitBtn.disabled = false;
     }
