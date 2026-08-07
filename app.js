@@ -67,6 +67,17 @@
 
   const el = (id) => document.getElementById(id);
 
+  // Retriggers the .is-materializing CSS animation on an element that
+  // just became visible (un-hidden). Reduced-motion users still get the
+  // element instantly, since the animation collapses to ~0ms via the
+  // global @media (prefers-reduced-motion) rule in styles.css.
+  function materialize(node) {
+    if (!node) return;
+    node.classList.remove("is-materializing");
+    void node.offsetWidth; // force reflow so the animation actually restarts
+    node.classList.add("is-materializing");
+  }
+
   const dom = {
     form: el("lookup-form"),
     usernameInput: el("username-input"),
@@ -367,6 +378,7 @@
 
       dom.boardEmpty.hidden = true;
       dom.analysis.hidden = false;
+      materialize(dom.analysis);
       dom.accuracySummary.hidden = true;
       dom.ribbonWrap.hidden = true;
       dom.moveDetail.hidden = true;
@@ -998,6 +1010,7 @@
     const moveNum = Math.ceil(worst.ply / 2);
 
     dom.criticalMoment.hidden = false;
+    materialize(dom.criticalMoment);
     dom.criticalMoment.innerHTML = `This is where the game turned: move <b>${moveNum}${worst.info.mover === "b" ? "..." : "."} ${escapeHtml(san)}</b> by ${escapeHtml(moverName)} swung the win probability by <b>${worst.info.drop.toFixed(0)} points</b>. Click to jump there.`;
     dom.criticalMoment.onclick = () => { state.currentPly = worst.ply; renderBoard(worst.ply); };
   }
@@ -1054,6 +1067,7 @@
     }
 
     dom.verdict.hidden = false;
+    materialize(dom.verdict);
     dom.verdict.textContent = sentence;
   }
 
@@ -1070,6 +1084,7 @@
     const game = state.games[state.activeGameIdx];
 
     dom.accuracySummary.hidden = false;
+    materialize(dom.accuracySummary);
     dom.accuracySummary.innerHTML = `
       ${accuracyCardHtml(game.white.username, whiteAcc, whiteMoves)}
       ${accuracyCardHtml(game.black.username, blackAcc, blackMoves)}
@@ -1094,15 +1109,19 @@
   }
 
   function classificationColor(cls) {
+    // Matches the CSS custom properties in styles.css (--gold, --sage,
+    // --amber, --straw, --crimson, --teal) — kept as literal hex here
+    // since this feeds an SVG attribute, not a stylesheet.
     return {
-      Best: "#C9A15A", Excellent: "#7FA383", Good: "#7FA383",
-      Inaccuracy: "#D9C25A", Mistake: "#D68C3C", Blunder: "#B5473A",
-      Book: "#7E9284", Brilliant: "#5B9BAA"
-    }[cls] || "#7E9284";
+      Best: "#0A84FF", Excellent: "#30D158", Good: "#30D158",
+      Inaccuracy: "#FFD60A", Mistake: "#FF9F0A", Blunder: "#FF453A",
+      Book: "#8E8E93", Brilliant: "#64D2FF"
+    }[cls] || "#8E8E93";
   }
 
   function renderRibbon() {
     dom.ribbonWrap.hidden = false;
+    materialize(dom.ribbonWrap);
     const svgNS = "http://www.w3.org/2000/svg";
     dom.ribbon.innerHTML = "";
 
@@ -1179,6 +1198,7 @@
     if (!info) { dom.moveDetail.hidden = true; return; }
 
     dom.moveDetail.hidden = false;
+    materialize(dom.moveDetail);
     const san = state.sanMoves[ply];
     const moverName = info.mover === "w"
       ? state.games[state.activeGameIdx].white.username
