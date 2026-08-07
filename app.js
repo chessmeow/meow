@@ -1297,8 +1297,9 @@
       }
     }
     throw new Error(
-      "Couldn't reach Chess.com's servers (network request failed after " + attempts + " attempts). " +
-      "This is usually a connection issue, a browser privacy extension blocking chess.com, or a brief outage on Chess.com's end — not a bug in this page. Check your connection and try again."
+      "Couldn't reach Chess.com for that username after " + attempts + " attempts. " +
+      "This usually means one of: the username is misspelled or the account was renamed/closed (Chess.com's API doesn't clearly report \"not found\" errors to browsers, so this shows up as a generic connection failure instead), a browser extension blocking the request, or a brief connection issue. " +
+      "Double-check the username at chess.com/member/<username> first — if that 404s, that's the actual cause."
     );
   }
 
